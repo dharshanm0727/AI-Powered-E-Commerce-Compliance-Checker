@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Legal Metrology AI Compliance Checker</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & Babel CDN -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body { background-color: #090D16; color: #F1F5F9; font-family: system-ui, -apple-system, sans-serif; }
+    .glass-card { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glass-panel { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(16px); border-right: 1px solid rgba(255, 255, 255, 0.08); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // --- API Helper ---
+    const token = () => localStorage.getItem('token');
+    const authHeaders = () => ({ 'Authorization': `Bearer ${token()}`, 'Content-Type': 'application/json' });
+
+    async function apiFetch(endpoint, method = 'GET', body = null, isFormData = false) {
+      const options = { method, headers: {} };
+      if (token()) options.headers['Authorization'] = `Bearer ${token()}`;
+      if (body) {
+        if (isFormData) {
+          options.body = body;
+        } else {
+          options.headers['Content-Type'] = 'application/json';
+          options.body = JSON.stringify(body);
+        }
+      }
+      const res = await fetch(`/api/v1${endpoint}`, options);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ detail: 'API Error' }));
+        throw new Error(errData.detail || 'Request failed');
+      }
+      if (res.status === 204) return true;
+      return res.json();
+    }
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [view, setView] = useState('login'); // login, register, dashboard, submit, report, rules, admin
+      const [selectedReportId, setSelectedReportId] = useState(null);
+      const [stats, setStats] = useState(null);
+      const [url, setUrl] = useState('');
+      const [loginEmail, setLoginEmail] = useState('admin@compliance.com');
+      const [loginPw, setLoginPw] = useState('admin123');
+      const [regEmail, setRegEmail] = useState('');
+      const [regPw, setRegPw] = useState('');
+      const [regName, setRegName] = useState('');
+      const [error, setError] = useState('');
+      const [loading, setLoading] = useState(false);
+      const [report, setReport] = useState(null);
+      const [rules, setRules] = useState([]);
+      const [categories, setCategories] = useState([]);
+
+      useEffect(() => {
+        if (token()) {
+          apiFetch('/auth/me')
+            .then(u => { setUser(u); setView('dashboard'); loadStats(); })
+            .catch(() => { localStorage.removeItem('token'); setView('login'); });
+        }
+      }, []);
+
+      const loadStats = () => {
+        apiFetch('/dashboard/stats').then(setStats).catch(console.error);
+      };
+
+      const handleLogin = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try {
+          const fd = new FormData();
+          fd.append('username', loginEmail);
+          fd.append('password', loginPw);
+          const data = await apiFetch('/auth/login', 'POST', fd, true);
+          localStorage.setItem('token', data.access_token);
+          const profile = await apiFetch('/auth/me');
+          setUser(profile);
+          setView('dashboard');
+          loadStats();
+        } catch (err) { setError(err.message); }
+        finally { setLoading(false); }
+      };
+
+      const handleRegister = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try {
+          const data = await apiFetch('/auth/register', 'POST', { email: regEmail, password: regPw, full_name: regName });
+          localStorage.setItem('token', data.access_token);
+          const profile = await apiFetch('/auth/me');
+          setUser(profile);
+          setView('dashboard');
+          loadStats();
+        } catch (err) { setError(err.message); }
+        finally { setLoading(false); }
+      };
+
+      const handleAuditSubmit = async (e) => {
+        e.preventDefault(); setError(''); setLoading(true);
+        try {
+          const resReport = await apiFetch('/compliance/check', 'POST', { url });
+          setReport(resReport);
+          setSelectedReportId(resReport.id);
+          setView('report');
+        } catch (err) { setError(err.message); }
+        finally { setLoading(false); }
+      };
+
+      const openReport = async (id) => {
+        setLoading(true);
+        try {
+          const resReport = await apiFetch(`/reports/${id}`);
+          setReport(resReport);
+          setSelectedReportId(id);
+          setView('report');
+        } catch (err) { console.error(err); }
+        finally { setLoading(false); }
+      };
+
+      const loadRulesView = () => {
+        setView('rules');
+        apiFetch('/rules').then(setRules).catch(console.error);
+        apiFetch('/categories').then(setCategories).catch(console.error);
+      };
+
+      const logout = () => {
+        localStorage.removeItem('token');
+        setUser(null);
+        setView('login');
+      };
+
+      // Status Badge Component
+      const Badge = ({ status }) => {
+        const colors = {
+          COMPLIANT: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+          WARNING: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+          NON_COMPLIANT: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+          PASSED: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+          MISSING: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+          INCORRECT: 'bg-rose-500/10 text-rose-400 border-rose-500/20',
+          PENDING: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20'
+        };
+        return (
+          <span className={`px-2.5 py-1 rounded text-[11px] font-bold tracking-wide uppercase border ${colors[status] || 'bg-slate-800 text-slate-300'}`}>
+            {status}
+          </span>
+        );
+      };
+
+      return (
+        <div className="min-h-screen flex flex-col md:flex-row">
+          {/* Sidebar */}
+          {user && (
+            <aside className="w-full md:w-64 glass-panel p-5 flex flex-col justify-between space-y-6">
+              <div>
+                <div className="flex items-center gap-3 pb-4 border-b border-slate-800">
+                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center font-extrabold text-white text-lg shadow-lg shadow-cyan-500/20">
+                    LM
+                  </div>
+                  <div>
+                    <h2 className="font-bold text-slate-100 text-sm">Legal Metrology AI</h2>
+                    <p className="text-[11px] text-cyan-400">Packaged Commodities</p>
+                  </div>
+                </div>
+
+                <nav className="mt-6 space-y-1 text-sm font-medium">
+                  <button onClick={() => { setView('dashboard'); loadStats(); }} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${view === 'dashboard' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
+                    📊 Dashboard
+                  </button>
+                  <button onClick={() => setView('submit')} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${view === 'submit' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
+                    ✨ Audit Product URL
+                  </button>
+                  <button onClick={loadRulesView} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${view === 'rules' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' : 'text-slate-400 hover:text-slate-200'}`}>
+                    📖 Rule Explorer
+                  </button>
+                </nav>
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <div className="text-xs">
+                  <p className="font-semibold text-slate-200">{user.full_name || user.email}</p>
+                  <span className="text-[10px] uppercase font-bold text-cyan-400">{user.role}</span>
+                </div>
+                <button onClick={logout} className="w-full text-left text-xs text-rose-400 hover:underline pt-1">
+                  Sign Out
+                </button>
+              </div>
+            </aside>
+          )}
+
+          {/* Main Content View */}
+          <main className="flex-1 p-6 md:p-8 overflow-y-auto max-w-6xl mx-auto w-full">
+            {/* LOGIN VIEW */}
+            {view === 'login' && (
+              <div className="max-w-md mx-auto my-16 glass-card p-8 rounded-2xl space-y-6">
+                <div className="text-center space-y-2">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center mx-auto text-xl font-bold text-white shadow-lg shadow-cyan-500/20">
+                    🛡️
+                  </div>
+                  <h1 className="text-2xl font-extrabold text-slate-100">Legal Metrology AI</h1>
+                  <p className="text-xs text-slate-400">Sign in to scan packaged commodity declarations</p>
+                </div>
+
+                {error && <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs text-center">{error}</div>}
+
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Email</label>
+                    <input type="email" required value={loginEmail} onChange={e => setLoginEmail(e.target.value)} className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-cyan-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-300 mb-1">Password</label>
+                    <input type="password" required value={loginPw} onChange={e => setLoginPw(e.target.value)} className="w-full px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-100 focus:outline-none focus:border-cyan-500" />
+                  </div>
+                  <button type="submit" disabled={loading} className="w-full py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-sm hover:from-cyan-400 hover:to-blue-500 transition-all shadow-lg shadow-cyan-500/20">
+                    {loading ? 'Authenticating...' : 'Sign In'}
+                  </button>
+                </form>
+
+                <div className="text-center text-xs text-slate-400 pt-2">
+                  Demo Admin: <code className="text-cyan-400">admin@compliance.com / admin123</code>
+                </div>
+              </div>
+            )}
+
+            {/* DASHBOARD VIEW */}
+            {view === 'dashboard' && stats && (
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-2xl font-extrabold text-slate-100">Compliance Dashboard</h1>
+                  <p className="text-xs text-slate-400">Legal Metrology Packaged Commodity Audit Statistics</p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <div className="glass-card p-5 rounded-xl border-l-4 border-l-cyan-500">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Total Scanned</span>
+                    <p className="text-3xl font-extrabold text-slate-100 mt-1">{stats.total_products_scanned}</p>
+                  </div>
+                  <div className="glass-card p-5 rounded-xl border-l-4 border-l-emerald-500">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Compliant</span>
+                    <p className="text-3xl font-extrabold text-emerald-400 mt-1">{stats.compliant_count}</p>
+                  </div>
+                  <div className="glass-card p-5 rounded-xl border-l-4 border-l-amber-500">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Warnings</span>
+                    <p className="text-3xl font-extrabold text-amber-400 mt-1">{stats.warning_count}</p>
+                  </div>
+                  <div className="glass-card p-5 rounded-xl border-l-4 border-l-rose-500">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Non-Compliant</span>
+                    <p className="text-3xl font-extrabold text-rose-400 mt-1">{stats.non_compliant_count}</p>
+                  </div>
+                </div>
+
+                {/* Recent Reports */}
+                <div className="glass-card p-5 rounded-xl space-y-4">
+                  <h2 className="text-base font-bold text-slate-100">Recent Product Scans</h2>
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="pb-3 px-3">Report ID</th>
+                        <th className="pb-3 px-3">Product Title</th>
+                        <th className="pb-3 px-3">Status</th>
+                        <th className="pb-3 px-3">Score</th>
+                        <th className="pb-3 px-3">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {stats.recent_reports && stats.recent_reports.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-800/30">
+                          <td className="py-3 px-3 font-mono font-bold text-slate-300">#{r.id}</td>
+                          <td className="py-3 px-3 max-w-xs truncate text-slate-200 font-medium">{r.product?.title || r.product?.url}</td>
+                          <td className="py-3 px-3"><Badge status={r.overall_status} /></td>
+                          <td className="py-3 px-3 font-bold text-slate-200">{r.overall_score}%</td>
+                          <td className="py-3 px-3">
+                            <button onClick={() => openReport(r.id)} className="text-cyan-400 font-semibold hover:underline">View Report</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* AUDIT SUBMIT VIEW */}
+            {view === 'submit' && (
+              <div className="max-w-2xl mx-auto space-y-6">
+                <div>
+                  <h1 className="text-2xl font-extrabold text-slate-100">Audit Product Page</h1>
+                  <p className="text-xs text-slate-400">Enter an e-commerce product URL to inspect packaged commodity declarations</p>
+                </div>
+
+                <div className="glass-card p-6 rounded-2xl space-y-6">
+                  {error && <div className="p-3 rounded bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs">{error}</div>}
+
+                  <form onSubmit={handleAuditSubmit} className="space-y-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-2">E-Commerce Product URL</label>
+                      <input type="url" required value={url} onChange={e => setUrl(e.target.value)} placeholder="https://www.amazon.in/dp/B08X123456 or https://www.flipkart.com/..." className="w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl text-sm text-slate-100 focus:outline-none focus:border-cyan-500" />
+                    </div>
+                    <button type="submit" disabled={loading} className="w-full py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold text-sm hover:from-cyan-400 hover:to-blue-500 shadow-lg shadow-cyan-500/20">
+                      {loading ? 'Initiating 10-Step AI Compliance Scanner...' : 'Start AI Compliance Audit'}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* REPORT DETAIL VIEW */}
+            {view === 'report' && report && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <h1 className="text-2xl font-extrabold text-slate-100">Report #{report.id}</h1>
+                      <Badge status={report.overall_status} />
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">{report.product?.title || report.product?.url}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <a href={`/api/v1/reports/${report.id}/export/pdf`} download className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-semibold border border-slate-700">📄 PDF Report</a>
+                    <a href={`/api/v1/reports/${report.id}/export/excel`} download className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs font-semibold border border-slate-700">📊 Excel Sheet</a>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="glass-card p-4 rounded-xl">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Category</span>
+                    <p className="text-base font-bold text-slate-100 mt-1">{report.category?.name || 'Packaged Commodity'}</p>
+                  </div>
+                  <div className="glass-card p-4 rounded-xl">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">Compliance Score</span>
+                    <p className="text-base font-bold text-cyan-400 mt-1">{report.overall_score}%</p>
+                  </div>
+                  <div className="glass-card p-4 rounded-xl">
+                    <span className="text-xs font-semibold text-slate-400 uppercase">OCR Execution</span>
+                    <p className="text-base font-bold text-slate-100 mt-1">{report.ocr_checked ? 'Executed' : 'Not Needed'}</p>
+                  </div>
+                </div>
+
+                {report.reasoning_summary && (
+                  <div className="glass-card p-4 rounded-xl border border-slate-800">
+                    <h4 className="text-xs font-bold text-cyan-400">Explainable AI Audit Rationale</h4>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">{report.reasoning_summary}</p>
+                  </div>
+                )}
+
+                {/* Declarations Table */}
+                <div className="glass-card p-5 rounded-xl space-y-3">
+                  <h3 className="text-sm font-bold text-slate-100">Evaluated Declarations</h3>
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="pb-3 px-3">Rule Code</th>
+                        <th className="pb-3 px-3">Mandatory Declaration</th>
+                        <th className="pb-3 px-3">Status</th>
+                        <th className="pb-3 px-3">Extracted Value</th>
+                        <th className="pb-3 px-3">AI Rationale</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {report.violations && report.violations.map(v => (
+                        <tr key={v.id} className="hover:bg-slate-800/30">
+                          <td className="py-3 px-3 font-mono font-bold text-cyan-400">{v.rule?.rule_code || 'LM-RULE'}</td>
+                          <td className="py-3 px-3 text-slate-200 font-medium">{v.field_name}</td>
+                          <td className="py-3 px-3"><Badge status={v.status} /></td>
+                          <td className="py-3 px-3 font-mono text-slate-300">{v.actual_found || 'Not Found'}</td>
+                          <td className="py-3 px-3 text-slate-400">{v.ai_reasoning}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* RULE EXPLORER VIEW */}
+            {view === 'rules' && (
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-2xl font-extrabold text-slate-100">Legal Metrology Rule Registry</h1>
+                  <p className="text-xs text-slate-400">Mandatory declaration rules configured in database</p>
+                </div>
+
+                <div className="glass-card p-5 rounded-xl space-y-4">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase">
+                        <th className="pb-3 px-3">Rule Code</th>
+                        <th className="pb-3 px-3">Declaration Name</th>
+                        <th className="pb-3 px-3">Mandatory Tokens</th>
+                        <th className="pb-3 px-3">Level</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {rules.map(r => (
+                        <tr key={r.id} className="hover:bg-slate-800/30">
+                          <td className="py-3 px-3 font-mono font-bold text-cyan-400">{r.rule_code}</td>
+                          <td className="py-3 px-3 text-slate-200 font-semibold">{r.declaration_name}</td>
+                          <td className="py-3 px-3 text-slate-400">{r.mandatory_fields}</td>
+                          <td className="py-3 px-3 uppercase text-slate-300 font-bold">{r.enforcement_level}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
